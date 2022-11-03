@@ -57,7 +57,7 @@ array[NODES] of int: Size = array1d(NODES, [if i <= items then size[i] else 0 en
 array[NODES] of var NODES: successor; 
 array[NODES] of var NODES: predecessor; % redundant predecessor variables
 array[NODES] of var 1..couriers: vehicle; % which vehicle visits which customer?
-array[NODES] of var int: load; % load when arriving at node n in NODES
+array[NODES] of var 0..300: load; % load when arriving at node n in NODES
 
 
 % +++++++++++++++++++++++++++ CONSTRAINTS +++++++++++++++++++++++++++++++++
@@ -97,6 +97,17 @@ constraint redundant_constraint(
     )
 );
 
+constraint forall(i,j in START where i != j)(
+    vehicle[i] != vehicle[j]
+);
+
+
+% constraint redundant_constraint(
+%     forall(i,j in END where i != j)(
+%         vehicle[i] != vehicle[j]
+%     )
+% );
+
 % Load
 % For simplicity it is represented as if the courier picks up the item when passing by the node
 % Initial load is always 0 
@@ -113,6 +124,11 @@ constraint forall(i in 1..items union END)(
 constraint forall(i in END)(
     load[i] <= load_size[vehicle[i]]
 );
+
+% Add constraints to reduce the search space:
+% - If the couriers have the same load_size do not check again
+% - Start by assigning first to the most capacitated vehicles
+% 
 
 % Cost function
 var int: objective = sum(i in 1..items union END)(distance[predecessor[i], i]);
