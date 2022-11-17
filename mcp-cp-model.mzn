@@ -1,5 +1,6 @@
 include "circuit.mzn";
 include "alldifferent.mzn";
+include "bin_packing.mzn";
 
 % The number of couriers
 int: couriers;
@@ -10,11 +11,6 @@ int: n_points = items + 1; % Note: the error may be due to not giving the correc
 int: start_point = items + 1;
     % Vehicle capacity
 array[1..couriers] of int: load_size;
-    % Decision variables, is arc ij part of a route?
-array[1..couriers, 1..n_points, 1..n_points] of var 0..1: routes;
-    % For commodity flow (?)
-  array[1..couriers, 1..n_points] of var int: uu;
-
     % Points coordinates
 array[1..n_points] of int: point_x;
 array[1..n_points] of int: point_y;
@@ -35,10 +31,10 @@ function var float: euclidean(var int: x1, var int: y1, var int: x2, var int: y2
 function var int: manhattan(var int: x1, var int: y1, var int: x2, var int: y2) = abs(x1 - x2) + abs(y1 - y2);
 
 % Initial distance matrix
-array[1..n_points, 1..n_points] of var int: dist = array2d(1..n_points, 1..n_points, [if i == j then 0 else manhattan(point_x[i], point_y[i], point_x[j],   point_y[j]) endif | i, j in 1..n_points]);
+array[1..n_points, 1..n_points] of var float: dist = array2d(1..n_points, 1..n_points, [if i == j then 0 else euclidean(point_x[i], point_y[i], point_x[j],   point_y[j]) endif | i, j in 1..n_points]);
 
 % Used distance matrix
-array[NODES, NODES] of var int: distance = array2d(NODES,NODES,[           
+array[NODES, NODES] of var float: distance = array2d(NODES,NODES,[           
   if i<=items /\ j <= items then 
     dist[i,j]
   elseif i<=items /\ j>items then % customer-depot
@@ -57,99 +53,127 @@ array[NODES] of int: Size = array1d(NODES, [if i <= items then size[i] else 0 en
 array[NODES] of var NODES: successor; 
 array[NODES] of var NODES: predecessor; % redundant predecessor variables
 array[NODES] of var 1..couriers: vehicle; % which vehicle visits which customer?
-array[NODES] of var 0..300: load; % load when arriving at node n in NODES
+int: load_limit = max(load_size);
+array[NODES] of var 0..load_limit: load; % load when arriving at node n in NODES
 
 
-% +++++++++++++++++++++++++++ CONSTRAINTS +++++++++++++++++++++++++++++++++
-% Initialization
-constraint forall(i in START)(
-    predecessor[i] in END
-);
+var float: objective;
 
-constraint forall(i in END)(
-    successor[i] in START
-);
-
-% Difference
-constraint alldifferent(successor);
-constraint alldifferent(predecessor);
-
-% Coherence
-constraint forall(i in 1..items union START)( % Could also be on whole NODES but it's redundant I think
-    successor[predecessor[i]] = i
-);
-
-constraint forall(i in 1..items union END)( % Specular to above
-    predecessor[successor[i]] = i
-);
-
-% constraint circuit(predecessor);
-% constraint circuit(successor);
-
-% Path
-constraint forall(i in NODES)(
-    vehicle[i] = vehicle[predecessor[i]]
-);
-
+% ------ initialization constraints ---- %
+% 1
 constraint redundant_constraint(
-    forall(i in NODES)(
-        vehicle[i] = vehicle[successor[i]]
-    )
+   forall(n in (items+2..items+couriers)) (
+     predecessor[n] = n + couriers-1
+   )
 );
 
-constraint forall(i,j in START where i != j)(
-    vehicle[i] != vehicle[j]
+% 2
+constraint redundant_constraint(
+   predecessor[items+1] = items+2*couriers
 );
 
+% successors of end nodes are start nodes
+% 3
+constraint 
+   forall(n in (items+couriers+1..items+2*couriers-1)) (
+     successor[n] = n-couriers+1 
+   );
+% 4
+constraint
+   successor[items+2*couriers] = items+1;
 
-% constraint redundant_constraint(
-%     forall(i,j in END where i != j)(
-%         vehicle[i] != vehicle[j]
-%     )
-% );
+% associate each start/end nodes with a vehicle
+% 5
+constraint 
+   forall(n in START) (
+     vehicle[n] = n-items
+   );
+% 6
+constraint 
+   forall(n in END) (
+     vehicle[n] = n-items-couriers
+   );
 
-% Load
-% For simplicity it is represented as if the courier picks up the item when passing by the node
-% Initial load is always 0 
-constraint forall(i in START)(
-    load[i] = 0
+
+% 8
+% vehicle load when starting at the depot
+constraint 
+   forall(n in START) (
+     load[n] = 0 % demand[n]
+   );
+   
+% ------- predecessor/successor constraints --- %
+% 9
+constraint redundant_constraint(
+   forall(n in NODES) (
+      successor[predecessor[n]] = n
+   )
 );
 
-% Problematic constraint:
-% the load at each node is the one of the current node plus the previous visited
-constraint forall(i in 1..items union END)(
-    load[i] = Size[i] + load[predecessor[i]]
+% 10
+constraint redundant_constraint(
+   forall(n in NODES) (
+      predecessor[successor[n]] = n
+   )
 );
 
-constraint forall(i in END)(
-    load[i] <= load_size[vehicle[i]]
+ 
+% alldiff + subtour elimination constraints
+% 11
+constraint 
+   circuit(successor);
+% 12
+constraint redundant_constraint(
+   circuit(predecessor)
 );
 
-% Add constraints to reduce the search space:
-% - If the couriers have the same load_size do not check again
-% - Start by assigning first to the most capacitated vehicles
-% 
+ 
+  % ---- vehicle constraints ------------- %
 
-% Cost function
-var int: objective = sum(i in 1..items union END)(distance[predecessor[i], i]);
+% vehicle of node i is the same as the vehicle for the predecessor
+% 13
+constraint redundant_constraint(
+   forall(n in 1..items) (
+      vehicle[predecessor[n]] = vehicle[n]
+   )
+);
+% 14
+constraint 
+   forall(n in 1..items) (
+      vehicle[successor[n]] = vehicle[n]
+   );
 
-% Search
-solve :: seq_search(
-    [
-      int_search(predecessor, first_fail, indomain_split, complete),
-%       int_search(load, dom_w_deg, indomain_min, complete),
-      int_search(load, first_fail, indomain_min, complete),
-      int_search(vehicle, first_fail, indomain_split, complete),
-    ]
-) minimize objective;
+ % ----- load constraints ------------ %
 
-% Output
-output [
-    "distance = ", show(distance), "\n",
-    "predecessor = ", show(predecessor), "\n",
-    "successor = ", show(successor), "\n",
-    "objective = ", show(objective),"\n",
-    "vehicle = ", show(vehicle),"\n",
-    "load = ", show(load),"\n",
-];
+constraint 
+   forall(n in 1..items) (
+      load[n] + size[n] = load[successor[n]]
+   );
+constraint
+   forall(n in START) (
+      load[n] = load[successor[n]] 
+   );
 
+constraint
+    forall(n in END)(
+        load[n] <= load_size[vehicle[n]]
+    );
+
+% Bin packing constraints
+
+% constraint bin_packing_capa(load_size, load, size);
+
+
+% =====================================
+% Objective
+% =====================================
+
+constraint objective = sum (n in 1..items union END) (distance[predecessor[n], n]);
+
+solve :: seq_search([int_search([predecessor[j] | j in NODES], dom_w_deg, indomain_split, complete),
+               int_search([successor[j] | j in NODES], dom_w_deg, indomain_random, complete),
+               int_search(vehicle, first_fail, indomain_split, complete),
+%                int_search([arrivalTime[j] | j in NODES],first_fail, indomain_min, complete),
+               int_search([load[j] | j in NODES], first_fail, indomain_min, complete)
+              ]) :: restart_luby(20) :: relax_and_reconstruct(predecessor, 80)
+minimize objective; % distance
