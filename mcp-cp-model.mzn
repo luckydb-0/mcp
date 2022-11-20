@@ -160,9 +160,33 @@ constraint
     );
 
 % Bin packing constraints
+% Note: try with whole vehicle and Size arrays
+constraint bin_packing_capa(load_size, [vehicle[i] | i in 1..items ], [Size[i] | i in 1..items ]);
 
-% constraint bin_packing_capa(load_size, load, size);
 
+% Symmetry breaking
+constraint
+    lex_lesseq(predecessor, [ predecessor[i] | i in NODES ])
+ /\ lex_lesseq(predecessor, [ predecessor[i] | i in reverse(NODES) ]);
+
+% % /\  lex_lesseq(array1d(predecessor), [ predecessor[i,j] | i in reverse(1..NODES), j in 1..NODES ])
+% % /\  lex_lesseq(array1d(predecessor), [ predecessor[j,i] | i in 1..NODES, j in reverse(1..NODES) ])
+% % /\  lex_lesseq(array1d(predecessor), [ predecessor[i,j] | i in 1..NODES, j in reverse(1..NODES) ])
+% % /\  lex_lesseq(array1d(predecessor), [ predecessor[j,i] | i in reverse(1..NODES), j in 1..NODES ])
+% % /\  lex_lesseq(array1d(predecessor), [ predecessor[i,j] | i,j in reverse(1..NODES) ])
+% % /\  lex_lesseq(array1d(predecessor), [ predecessor[j,i] | i,j in reverse(1..NODES) ])
+
+constraint
+    lex_lesseq(successor, [ successor[i] | i in NODES ])
+ /\ lex_lesseq(successor, [ successor[i] | i in reverse(NODES) ]);
+
+constraint
+    lex_lesseq(vehicle, [ vehicle[i] | i in START ])
+ /\ lex_lesseq(vehicle, [ vehicle[i] | i in reverse(START) ]);
+
+constraint
+    lex_lesseq(vehicle, [ vehicle[i] | i in END])
+ /\ lex_lesseq(vehicle, [ vehicle[i] | i in reverse(END) ]);
 
 % =====================================
 % Objective
@@ -170,10 +194,9 @@ constraint
 
 constraint objective = sum (n in 1..items union END) (distance[predecessor[n], n]);
 
-solve :: seq_search([int_search([predecessor[j] | j in NODES], dom_w_deg, indomain_split, complete),
-               int_search([successor[j] | j in NODES], dom_w_deg, indomain_random, complete),
-               int_search(vehicle, first_fail, indomain_split, complete),
-%                int_search([arrivalTime[j] | j in NODES],first_fail, indomain_min, complete),
-               int_search([load[j] | j in NODES], first_fail, indomain_min, complete)
-              ]) :: restart_luby(20) :: relax_and_reconstruct(predecessor, 80)
+solve :: seq_search([int_search([predecessor[j] | j in 1..items], dom_w_deg, indomain_split, complete),
+               int_search([successor[j] | j in 1..items], dom_w_deg, indomain_random, complete),
+               int_search([vehicle[j] | j in START], first_fail, indomain_split, complete),
+               int_search([load[j] | j in END], first_fail, indomain_min, complete)
+              ]) :: restart_luby(250) :: relax_and_reconstruct(predecessor, 80)
 minimize objective; % distance
